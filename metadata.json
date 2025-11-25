@@ -1,0 +1,5 @@
+{
+  "name": "EcoPulse - Bioplastic News",
+  "description": "Real-time bioplastic news tracker powered by Gemini 2.5 Flash with Google Search Grounding.",
+  "requestFramePermissions": []
+}
