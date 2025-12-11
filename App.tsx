@@ -1,11 +1,10 @@
 import React, { useEffect, useState } from 'react';
 import { Header } from './components/Header';
+import { UrlInput } from './components/UrlInput';
 import { NewsCard } from './components/NewsCard';
-import { fetchBioplasticNews, generateDeepDiveReport } from './services/geminiService';
+import { fetchBioplasticNews, generateDeepDiveReport, generateNewsImage, researchNewsContact, extractNewsFromUrl } from './services/geminiService';
 import { NewsItem, GroundingChunk } from './types';
-import { AlertCircle, Info } from 'lucide-react';
-// @ts-ignore
-import JSZip from 'jszip';
+import { AlertCircle, Info, Search } from 'lucide-react';
 
 const App: React.FC = () => {
   const [news, setNews] = useState<NewsItem[]>([]);
@@ -14,27 +13,43 @@ const App: React.FC = () => {
   const [loading, setLoading] = useState<boolean>(true);
   const [error, setError] = useState<string | null>(null);
   
-  // Selection & Generation State
-  const [selectedIndices, setSelectedIndices] = useState<Set<number>>(new Set());
-  const [isGenerating, setIsGenerating] = useState<boolean>(false);
-  const [generationProgress, setGenerationProgress] = useState<string>('');
+  // Search State
+  const [searchQuery, setSearchQuery] = useState('');
+  
+  // Cost State - Initialized to 0 to support accumulation
+  const [sessionCost, setSessionCost] = useState<number>(0);
 
-  const loadNews = async () => {
+  // Loading States for individual items
+  const [imageLoadingStates, setImageLoadingStates] = useState<Set<number>>(new Set());
+  const [reportLoadingStates, setReportLoadingStates] = useState<Set<number>>(new Set());
+  const [contactLoadingStates, setContactLoadingStates] = useState<Set<number>>(new Set());
+  const [isUrlProcessing, setIsUrlProcessing] = useState(false);
+
+  const loadNews = async (query: string = '') => {
     setLoading(true);
     setError(null);
     setNews([]);
     setGroundingChunks([]);
     setRawResponse(undefined);
-    setSelectedIndices(new Set());
+    setImageLoadingStates(new Set());
+    setReportLoadingStates(new Set());
+    setContactLoadingStates(new Set());
+    
+    // We do NOT reset sessionCost here, to allow accumulation per user session.
 
     try {
-      const data = await fetchBioplasticNews();
+      const data = await fetchBioplasticNews(query);
       if (data.items.length > 0) {
         setNews(data.items);
       } else {
         setRawResponse(data.rawText);
       }
       setGroundingChunks(data.groundingChunks);
+      
+      // Accumulate cost
+      if (data.estimatedCost) {
+        setSessionCost(prev => prev + data.estimatedCost!);
+      }
     } catch (err) {
       setError("Failed to fetch news. Please check your API key configuration or try again later.");
     } finally {
@@ -46,18 +61,8 @@ const App: React.FC = () => {
     loadNews();
   }, []);
 
-  const toggleSelection = (index: number) => {
-    const newSelection = new Set(selectedIndices);
-    if (newSelection.has(index)) {
-      newSelection.delete(index);
-    } else {
-      newSelection.add(index);
-    }
-    setSelectedIndices(newSelection);
-  };
-
-  const clearSelection = () => {
-    setSelectedIndices(new Set());
+  const handleRefresh = () => {
+    loadNews(searchQuery);
   };
 
   const handleUpdateUrl = (index: number, newUrl: string) => {
@@ -66,78 +71,178 @@ const App: React.FC = () => {
     setNews(updatedNews);
   };
 
-  const handleGenerateReports = async () => {
-    if (selectedIndices.size === 0) return;
-    
-    setIsGenerating(true);
-    setGenerationProgress('Initializing research...');
-
-    try {
-      const selectedItems = Array.from(selectedIndices).map(idx => news[idx]);
-      const zip = new JSZip();
-      
-      setGenerationProgress(`Researching ${selectedItems.length} stories...`);
-
-      // Process reports
-      const reports = await Promise.all(selectedItems.map(async (item) => {
-        const content = await generateDeepDiveReport(item);
-        // Sanitize filename: YYYY-MM-DD-[Title].md
-        const safeTitle = item.title.replace(/[^a-z0-9]/gi, '_').substring(0, 100);
-        const fileName = `${item.date}-${safeTitle}.md`;
-        return { fileName, content };
-      }));
-
-      // If only one report, download directly as .md
-      if (reports.length === 1) {
-        const { fileName, content } = reports[0];
-        downloadFile(content, fileName, 'text/markdown');
-      } else {
-        // If multiple, zip them
-        reports.forEach(report => {
-          zip.file(report.fileName, report.content);
-        });
-        
-        const content = await zip.generateAsync({ type: "blob" });
-        const zipName = `EcoPulse_News_Batch_${new Date().toISOString().split('T')[0]}.zip`;
-        downloadBlob(content, zipName);
-      }
-
-      setGenerationProgress('Download started!');
-      setTimeout(() => setGenerationProgress(''), 2000);
-
-    } catch (err) {
-      console.error("Generation failed", err);
-      setError("Failed to generate reports. Please try again.");
-    } finally {
-      setIsGenerating(false);
-    }
-  };
-
-  const downloadFile = (content: string, fileName: string, contentType: string) => {
-    const blob = new Blob([content], { type: contentType });
-    downloadBlob(blob, fileName);
-  };
-
-  const downloadBlob = (blob: Blob, fileName: string) => {
-    const url = URL.createObjectURL(blob);
+  const downloadFile = (href: string, fileName: string) => {
     const a = document.createElement('a');
-    a.href = url;
+    a.href = href;
     a.download = fileName;
     document.body.appendChild(a);
     a.click();
     document.body.removeChild(a);
-    URL.revokeObjectURL(url);
+  };
+
+  const handleGenerateImage = async (index: number) => {
+    if (imageLoadingStates.has(index)) return;
+
+    const newLoading = new Set(imageLoadingStates);
+    newLoading.add(index);
+    setImageLoadingStates(newLoading);
+
+    try {
+      const item = news[index];
+      const { imageUrl, cost } = await generateNewsImage(item);
+      
+      // Update session cost
+      setSessionCost(prev => prev + cost);
+      
+      if (imageUrl) {
+        const updatedNews = [...news];
+        updatedNews[index] = { ...updatedNews[index], generatedImage: imageUrl };
+        setNews(updatedNews);
+
+        // Auto download the PNG
+        const safeTitle = item.title.replace(/[^a-z0-9]/gi, '_').substring(0, 50);
+        downloadFile(imageUrl, `${safeTitle}_illustration.png`);
+      }
+    } catch (err) {
+      console.error("Failed to generate image", err);
+    } finally {
+      const finishedLoading = new Set(imageLoadingStates);
+      finishedLoading.delete(index);
+      setImageLoadingStates(finishedLoading);
+    }
+  };
+
+  const handleGenerateReport = async (index: number) => {
+    if (reportLoadingStates.has(index)) return;
+
+    const newLoading = new Set(reportLoadingStates);
+    newLoading.add(index);
+    setReportLoadingStates(newLoading);
+
+    try {
+      const item = news[index];
+      const { content, cost } = await generateDeepDiveReport(item);
+      
+      // Update session cost
+      setSessionCost(prev => prev + cost);
+      
+      const safeTitle = item.title.replace(/[^a-z0-9]/gi, '_').substring(0, 100);
+      const fileName = `${item.date}-${safeTitle}.md`;
+      
+      const blob = new Blob([content], { type: 'text/markdown' });
+      const url = URL.createObjectURL(blob);
+      downloadFile(url, fileName);
+      URL.revokeObjectURL(url);
+
+    } catch (err) {
+      console.error("Report generation failed", err);
+      setError("Failed to generate report.");
+    } finally {
+      const finishedLoading = new Set(reportLoadingStates);
+      finishedLoading.delete(index);
+      setReportLoadingStates(finishedLoading);
+    }
+  };
+
+  const handleResearchContact = async (index: number) => {
+    if (contactLoadingStates.has(index)) return;
+
+    const newLoading = new Set(contactLoadingStates);
+    newLoading.add(index);
+    setContactLoadingStates(newLoading);
+
+    try {
+      const item = news[index];
+      const { contacts, cost } = await researchNewsContact(item);
+      
+      setSessionCost(prev => prev + cost);
+      
+      if (contacts && contacts.length > 0) {
+        const updatedNews = [...news];
+        updatedNews[index] = { 
+          ...updatedNews[index], 
+          contacts: contacts
+        };
+        setNews(updatedNews);
+      } else {
+        console.log("No contacts found for", item.title);
+      }
+    } catch (err) {
+      console.error("Contact research failed", err);
+    } finally {
+      const finishedLoading = new Set(contactLoadingStates);
+      finishedLoading.delete(index);
+      setContactLoadingStates(finishedLoading);
+    }
+  };
+
+  const handleUrlAnalysis = async (url: string, action: 'research' | 'report') => {
+    setIsUrlProcessing(true);
+    try {
+      // 1. Extract metadata from URL
+      const { item, cost } = await extractNewsFromUrl(url);
+      setSessionCost(prev => prev + cost);
+
+      if (!item) {
+        alert("Could not analyze this URL. Please ensure it is a valid news article.");
+        return;
+      }
+
+      const newItem = { ...item, userUrl: url };
+      
+      // Add the new item to the top of the list
+      // Note: We use functional update to ensure we have the latest list
+      setNews(prev => [newItem, ...prev]);
+
+      // 2. Perform the requested action on this new item
+      // Since state update is async, we perform the action on `newItem` directly and then update state again
+      
+      if (action === 'research') {
+        const { contacts, cost: researchCost } = await researchNewsContact(newItem);
+        setSessionCost(prev => prev + researchCost);
+        
+        if (contacts && contacts.length > 0) {
+           const updatedItem = {
+             ...newItem,
+             contacts
+           };
+           // Update the first item in the list (which is our new item)
+           setNews(prev => [updatedItem, ...prev.slice(1)]);
+        }
+      } else if (action === 'report') {
+        // Generate and download report
+        const { content, cost: reportCost } = await generateDeepDiveReport(newItem);
+        setSessionCost(prev => prev + reportCost);
+        
+        const safeTitle = newItem.title.replace(/[^a-z0-9]/gi, '_').substring(0, 100);
+        const fileName = `${newItem.date}-${safeTitle}.md`;
+        const blob = new Blob([content], { type: 'text/markdown' });
+        const downloadUrl = URL.createObjectURL(blob);
+        downloadFile(downloadUrl, fileName);
+        URL.revokeObjectURL(downloadUrl);
+      }
+
+    } catch (e) {
+      console.error("Manual URL analysis failed", e);
+      setError("Failed to process the provided URL.");
+    } finally {
+      setIsUrlProcessing(false);
+    }
   };
 
   return (
     <div className="min-h-screen flex flex-col bg-gray-50">
       <Header 
-        onRefresh={loadNews} 
+        onRefresh={handleRefresh} 
         isLoading={loading}
-        selectedCount={selectedIndices.size}
-        onGenerateReports={handleGenerateReports}
-        isGenerating={isGenerating}
-        onClearSelection={clearSelection}
+        searchQuery={searchQuery}
+        onSearchChange={setSearchQuery}
+        lastSessionCost={sessionCost}
+      />
+      
+      <UrlInput 
+        onAnalyzeAndAction={handleUrlAnalysis} 
+        isProcessing={isUrlProcessing}
       />
 
       <main className="flex-grow max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 w-full">
@@ -155,31 +260,22 @@ const App: React.FC = () => {
           </div>
         )}
 
-        {/* Generation Progress Toast */}
-        {isGenerating && (
-          <div className="fixed bottom-8 left-1/2 transform -translate-x-1/2 z-50">
-             <div className="bg-gray-900 text-white px-6 py-3 rounded-full shadow-xl flex items-center space-x-3">
-                <div className="w-2 h-2 bg-green-400 rounded-full animate-pulse"></div>
-                <span className="font-medium">{generationProgress}</span>
-             </div>
-          </div>
-        )}
-
         {/* Loading Skeleton */}
         {loading && (
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 animate-pulse">
             {[1, 2, 3, 4, 5, 6].map((i) => (
-              <div key={i} className="bg-white h-64 rounded-xl border border-gray-100 p-5">
+              <div key={i} className="bg-white h-80 rounded-xl border border-gray-100 p-5">
                 <div className="flex justify-between mb-4">
                     <div className="h-4 w-24 bg-gray-200 rounded"></div>
                     <div className="h-4 w-20 bg-gray-200 rounded"></div>
                 </div>
                 <div className="h-6 w-3/4 bg-gray-200 rounded mb-4"></div>
-                <div className="space-y-2">
+                <div className="space-y-2 mb-8">
                     <div className="h-3 w-full bg-gray-200 rounded"></div>
                     <div className="h-3 w-full bg-gray-200 rounded"></div>
                     <div className="h-3 w-2/3 bg-gray-200 rounded"></div>
                 </div>
+                <div className="mt-auto h-10 w-full bg-gray-100 rounded"></div>
               </div>
             ))}
           </div>
@@ -187,19 +283,21 @@ const App: React.FC = () => {
 
         {/* Success State - Structured News */}
         {!loading && !error && news.length > 0 && (
-          <>
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-              {news.map((item, index) => (
-                <NewsCard 
-                  key={index} 
-                  item={item} 
-                  isSelected={selectedIndices.has(index)}
-                  onToggle={() => toggleSelection(index)}
-                  onUpdateUrl={(url) => handleUpdateUrl(index, url)}
-                />
-              ))}
-            </div>
-          </>
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+            {news.map((item, index) => (
+              <NewsCard 
+                key={index} 
+                item={item} 
+                onUpdateUrl={(url) => handleUpdateUrl(index, url)}
+                onGenerateImage={() => handleGenerateImage(index)}
+                isImageLoading={imageLoadingStates.has(index)}
+                onGenerateReport={() => handleGenerateReport(index)}
+                isReportGenerating={reportLoadingStates.has(index)}
+                onResearchContact={() => handleResearchContact(index)}
+                isContactLoading={contactLoadingStates.has(index)}
+              />
+            ))}
+          </div>
         )}
 
         {/* Success State - Unstructured Fallback (Raw Text) */}
@@ -215,6 +313,17 @@ const App: React.FC = () => {
                 </div>
             </div>
           </div>
+        )}
+
+        {/* Empty State for Search */}
+        {!loading && !error && news.length === 0 && !rawResponse && (
+           <div className="text-center py-20">
+              <div className="bg-gray-100 rounded-full w-16 h-16 flex items-center justify-center mx-auto mb-4">
+                 <Search className="w-8 h-8 text-gray-400" />
+              </div>
+              <h3 className="text-lg font-medium text-gray-900">No stories found</h3>
+              <p className="text-gray-500 mt-1">Try searching for a company or paste a URL above.</p>
+           </div>
         )}
       </main>
 
