@@ -1,5 +1,4 @@
 
-
 export interface Contact {
   name: string;
   title?: string;
@@ -47,3 +46,18 @@ export interface GitHubConfig {
   repo: string;
   path: string;
 }
+
+export type NewsCategory = 
+  | 'All News'
+  | 'M&A' 
+  | 'Annual / Quarterly Report' 
+  | 'Partnerships' 
+  | 'Plant Announcements' 
+  | 'R&D News' 
+  | 'Start-ups' 
+  | 'Funding Rounds'
+  | 'Regulatory & Policy'
+  | 'Bio-based Feedstocks'
+  | 'Marine Bioplastics'
+  | 'Packaging Innovation'
+  | 'Circular Economy';
