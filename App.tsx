@@ -25,7 +25,7 @@ const App: React.FC = () => {
   const [error, setError] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedCategory, setSelectedCategory] = useState<NewsCategory>('All News');
-  const [timeRangeDays, setTimeRangeDays] = useState<number>(30);
+  const [timeRangeDays, setTimeRangeDays] = useState<number>(14); // Default to 2 weeks
   const [sessionCost, setSessionCost] = useState<number>(0);
   const [rawResponse, setRawResponse] = useState<string | undefined>(undefined);
 
@@ -37,7 +37,7 @@ const App: React.FC = () => {
   const [publishModalOpen, setPublishModalOpen] = useState(false);
   const [pendingReports, setPendingReports] = useState<GeneratedReport[]>([]);
 
-  const loadNews = async (query: string = '', category: NewsCategory = 'All News', days: number = 30) => {
+  const loadNews = async (query: string = '', category: NewsCategory = 'All News', days: number = 14) => {
     setLoading(true);
     setError(null);
     setRawResponse(undefined);
@@ -109,6 +109,7 @@ const App: React.FC = () => {
       const safeHeadline = item.title.toLowerCase().replace(/[^a-z0-9]/gi, '-').substring(0, 60);
       const fileName = `${item.date}-${safeHeadline}.md`;
       
+      // Auto-download for local backup
       const blob = new Blob([content], { type: 'text/markdown' });
       const reportUrl = URL.createObjectURL(blob);
       downloadFile(reportUrl, fileName);
@@ -180,8 +181,9 @@ const App: React.FC = () => {
     }
   };
 
-  const handleGitHubPublish = async (config: GitHubConfig) => {
-    const updatedReports = [...pendingReports];
+  const handleGitHubPublish = async (config: GitHubConfig, editedReports: GeneratedReport[]) => {
+    setPendingReports(editedReports);
+    const updatedReports = [...editedReports];
     for (let i = 0; i < updatedReports.length; i++) {
       try {
         updatedReports[i].status = 'uploading';

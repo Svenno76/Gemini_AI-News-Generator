@@ -61,32 +61,44 @@ export const fetchBioplasticNews = async (query: string = '', category: string =
 };
 
 export const generateDeepDiveReport = async (item: NewsItem): Promise<{ content: string, cost: number }> => {
-  const model = 'gemini-3-flash-preview';
+  const model = 'gemini-3-pro-preview'; // Higher logic for better categorization
   const effectiveSourceUrl = item.userUrl || item.url || item.source || '#';
   
   const prompt = `
     Create a high-quality news story based on this bioplastic news:
     Title: ${item.title}
-    Company: ${item.company}
+    Original Company provided: ${item.company}
     Date: ${item.date}
     Source: ${effectiveSourceUrl}
 
-    FORMATTING RULES:
-    1. Include the following Frontmatter exactly as shown:
+    FORMATTING RULES FOR FRONTMATTER:
+    - title: "${item.title}"
+    - date: ${item.date}
+    - draft: false
+    - summary: "[A concise 1-sentence summary]"
+    - tags: MUST NOT include generic terms like "innovation" or "sustainability". Use only specific keywords like the company name or the specific technology involved (e.g., ["PLA", "Carbon Capture", "Composting"]).
+    - category: MUST be exactly ONE from this list: [Certifications, Financial Results, Investment & Funding, M&A, Market Analysis, Partnerships, Plant Announcement, Product Launch, Regulatory&Policy].
+    - company: MUST be an array of all companies mentioned in the story (e.g., ["Company A", "Company B"]).
+    - company_type: MUST be one or more from this list: [Additive Producer, Bioplastic Producer, Technology Company, Compounder, Consulting, Recycler, Research Institute, Testing / Certification Company, University].
+    - source: "${item.source}"
+
+    EXAMPLE FRONTMATTER:
     ---
-    title: "${item.title}"
-    date: ${item.date}
+    title: "Example Title"
+    date: 2024-03-20
     draft: false
-    summary: "[Insert 1-sentence summary here]"
-    tags: ['${item.company}', 'innovation', 'sustainability']
-    category: "News"
-    company: "${item.company}"
-    company_type: "Bioplastic Producer"
-    source: "${item.source}"
+    summary: "Brief summary here."
+    tags: ["Tech A", "Company B"]
+    category: "Partnerships"
+    company: ["Company A", "Company B"]
+    company_type: ["Bioplastic Producer", "Technology Company"]
+    source: "Source Name"
     ---
 
-    2. Follow the frontmatter with 300 words of engaging journalistic content.
-    3. Use Markdown headings (##) and sections.
+    JOURNALISTIC CONTENT RULES:
+    1. Write 300 words of engaging journalistic content.
+    2. Use Markdown headings (##) and clear sections.
+    3. Ensure technical accuracy regarding bioplastic materials.
     4. End with a source link: **Source:** [Read more](${effectiveSourceUrl})
   `;
 

@@ -7,12 +7,13 @@ interface SourceListProps {
 }
 
 export const SourceList: React.FC<SourceListProps> = ({ chunks }) => {
-  // Deduplicate chunks based on URI
+  // Fix: Deduplicate chunks while ensuring chunk.web and chunk.web.uri exist before rendering
   const uniqueChunks = chunks.filter((chunk, index, self) =>
+    chunk.web?.uri &&
     index === self.findIndex((c) => (
       c.web?.uri === chunk.web?.uri
     ))
-  ).filter(chunk => chunk.web); // Ensure web property exists
+  );
 
   if (uniqueChunks.length === 0) return null;
 

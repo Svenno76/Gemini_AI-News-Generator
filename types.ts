@@ -18,10 +18,11 @@ export interface NewsItem {
   contacts?: Contact[];
 }
 
+// Fix: Make web properties optional to match @google/genai SDK GroundingChunk types
 export interface GroundingChunk {
   web?: {
-    uri: string;
-    title: string;
+    uri?: string;
+    title?: string;
   };
 }
 
